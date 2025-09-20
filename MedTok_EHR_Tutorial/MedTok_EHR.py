@@ -163,14 +163,14 @@ def single_run(args, params, logger):
     train_indices, val_indices = train_test_split(
         np.arange(len(dataset)),
         test_size=0.2,  # 20% validation
-        stratify=None if args.task in ['phenotype', 'drugrec'] else labels,  # Maintain label distribution
+        stratify=None,  # Disable stratification for small datasets
         random_state=42  # For reproducibility
     )
     
     val_indices, test_indices = train_test_split(
         val_indices,
         test_size=0.5,  # 50% of the validation set
-        stratify= None if args.task in ['phenotype', 'drugrec'] else labels[val_indices],  # Maintain label distribution
+        stratify=None,  # Disable stratification for small datasets
         random_state=42  # For reproducibility
     )
     

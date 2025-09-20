@@ -84,7 +84,7 @@ class EHRModel(pl.LightningModule):
                  dropout_prob=0.5, pred_threshold=0.5, max_ehr_length=3000, code_size=600000,
                  lr=0.0001, wd=0.0, lr_factor=0.01, num_class=2, task='readmission', lr_patience=100, lr_threshold=1e-4,
                  lr_threshold_mode='rel', lr_cooldown=0, min_lr=1e-8, eps=1e-8, lr_total_iters=10, memory_bank_size = 512, 
-                 pre_trained_embedding = '../pre_trained_model_/{pretrained_model_name}/embeddings_all.npy',
+                 pre_trained_embedding = '../MedTok/embeddings_all.npy',
                  hparams = None):
 
         super().__init__()
@@ -125,7 +125,12 @@ class EHRModel(pl.LightningModule):
         self.mask_prob = 0.2
 
         # Define node embeddings
-        self.emb = torch.from_numpy(np.load(pre_trained_embedding)).cuda()
+        embedding_dict = np.load(pre_trained_embedding, allow_pickle=True).item()
+        # Convert the dictionary to a numpy array for easier access
+        embeddings_list = []
+        for code, embedding in embedding_dict.items():
+            embeddings_list.append(embedding)
+        self.emb = torch.from_numpy(np.array(embeddings_list)).cuda()
         print("self.emb")
         print(self.emb.shape)
         print(self.emb.device)

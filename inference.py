@@ -144,6 +144,6 @@ def main(root, pre_trained_model_name):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    root = 'pre_trained_model/'
+    root = 'pre_trained_model'
     pre_trained_model = 'model_name' ##please put the model name here
     main(root, pre_trained_model)
