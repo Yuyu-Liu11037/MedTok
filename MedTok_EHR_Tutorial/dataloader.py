@@ -2,11 +2,12 @@ import torch
 import numpy as np
 from torch_geometric import data as DATA
 from torch_geometric.data import Batch
+from embedding_utils import load_embeddings_from_json
 
 med_codes_pkg_map_path = '../MedTok/embeddings_all.npy'
 
 class PatientDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset, max_visits=50, max_medical_code=1000, task = 'mortality', labels=None):
+    def __init__(self, dataset, max_visits=50, max_medical_code=1000, task = 'mortality', labels=None, embedding_path=None):
         self.dataset = dataset
         self.max_visits = max_visits
         self.max_medical_code = max_medical_code
@@ -17,16 +18,13 @@ class PatientDataset(torch.utils.data.Dataset):
 
         ##here should be the embedding of medical codes or the tokenizer of MedTok
         ## if you want to use the pre-trained embedding, please run the 'inference.py' in MedTok to get pre-trained embedding for each medical code
-        self.med_codes_pkg_map_path = med_codes_pkg_map_path
-        embedding_dict = np.load(self.med_codes_pkg_map_path, allow_pickle=True).item()
-        # Convert the dictionary to a numpy array for easier access
-        # We'll create a mapping from code to index and store embeddings as a matrix
-        self.code_to_idx = {}
-        embeddings_list = []
-        for idx, (code, embedding) in enumerate(embedding_dict.items()):
-            self.code_to_idx[code] = idx
-            embeddings_list.append(embedding)
-        self.pre_trained_embedding = np.array(embeddings_list)
+        self.med_codes_pkg_map_path = embedding_path if embedding_path is not None else med_codes_pkg_map_path
+        if self.med_codes_pkg_map_path.endswith('.json'):
+            # Load from JSON format
+            self.pre_trained_embedding = load_embeddings_from_json(self.med_codes_pkg_map_path)
+        else:
+            # Load from numpy format
+            self.pre_trained_embedding = np.load(self.med_codes_pkg_map_path)
 
         ##or just use it as a tokenizer shown on Hugginface
     
@@ -79,7 +77,7 @@ class PatientDataset(torch.utils.data.Dataset):
             else:
                 drugs = []
             node_set = conditions + procedures + drugs
-            node_set = [len(self.pre_trained_embedding) if x == -1 else x for x in node_set]
+            node_set = [self.pre_trained_embedding.shape[0] if x == -1 else x for x in node_set]
             visit_order_id.extend([v_i for _ in range(len(node_set))])
             codes.extend(node_set)
     
@@ -101,7 +99,7 @@ class PatientDataset(torch.utils.data.Dataset):
         for v_i, _ in enumerate(codes_map):
             code_visit = codes_map[v_i]
             node_set = code_visit
-            node_set = [len(self.pre_trained_embedding) if x == -1 else x for x in node_set]
+            node_set = [self.pre_trained_embedding.shape[0] if x == -1 else x for x in node_set]
             visit_order_id.extend([v_i for _ in range(len(node_set))])
             codes.extend(node_set)
     

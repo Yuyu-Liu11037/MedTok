@@ -21,7 +21,6 @@ from torch.nn.utils.rnn import pad_sequence
 from load_data import PatientEHR
 from dataloader import PatientDataset, collate
 from EHRModel_token import EHRModel
-from simple_distributed_fix import load_dataset_with_distributed_support, cleanup_dataset_cache
 import sys
 import wandb
 from torch.utils.data import Dataset, Subset, DataLoader
@@ -69,8 +68,6 @@ def construct_args():
     parser.add_argument('--ehr_feat_ratio', type=float, default=1.0)
     parser.add_argument('--pos_enc_dim', type=int, default=8)
     parser.add_argument('--debug', action="store_true")
-    parser.add_argument('--debug_patients', type=int, default=500, help="Number of patients to process in debug mode (default: 500)")
-    parser.add_argument('--single_gpu', action="store_true", help="Use single GPU for debug (ignores multi-GPU setup)")
     parser.add_argument('--mimic_dir_path', type=str)
     parser.add_argument('--save_result_path', type=str, default="task_results")
     parser.add_argument('--seed', type=int, default=42)
@@ -82,7 +79,7 @@ def construct_args():
     parser.add_argument('--input_dim', type=int, default=64)
     parser.add_argument('--output_dim', type=int, default=64)
     parser.add_argument('--num_heads', type=int, default=4)
-    parser.add_argument('--embedding_path', type=str, default='../MedTok/embeddings_all.npy')
+    parser.add_argument('--embedding_path', type=str, default='../MedTok/MedTok/code2embeddings.json')
 
     args = parser.parse_args()
     return args
@@ -115,15 +112,10 @@ def single_run(args, params, logger):
     max_visits = args.max_visits
     max_medical_code = args.max_medical_code
 
-    # 检查GPU数量并打印信息
-    gpu_count = torch.cuda.device_count()
-    if gpu_count > 1:
-        print("将使用多GPU训练模式")
-    else:
-        print("将使用单GPU训练模式")
-
-    # 使用分布式支持的数据加载，避免重复加载
-    dataset = load_dataset_with_distributed_support(args, params)
+    # load dataset
+    print("**********Start to load patient EHR data**********")
+    patient = PatientEHR(dataset_name, split='random', visit_num_th=2, max_visit_th=max_visits, task=task, remove_outliers=True)
+    dataset = patient.patient_ehr_data
     print("Number of samples: {}".format(len(dataset)))
     filter_out_dataset = []
     for d in dataset:
@@ -131,9 +123,9 @@ def single_run(args, params, logger):
             continue
         else:
             filter_out_dataset.append(d)
-    print("Number of samples in filtered dataset: {}".format(len(filter_out_dataset)))
+    print("Number of samples: {}".format(len(filter_out_dataset)))
     dataset = filter_out_dataset
-    # print("Number of samples: {}".format(len(dataset)))
+    print("Number of samples: {}".format(len(dataset)))
     #print(dataset)
     
     if args.task == 'phenotype':
@@ -204,15 +196,15 @@ def single_run(args, params, logger):
     print("**********Data Loader**********")
     train_dataset = Subset(dataset, train_indices)
     print(train_dataset)
-    train_dataset = PatientDataset(dataset=train_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels)
+    train_dataset = PatientDataset(dataset=train_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels, embedding_path=args.embedding_path)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate, num_workers=args.num_workers, sampler = sampler_train, drop_last=True) 
 
     val_dataset = Subset(dataset, val_indices)
-    val_dataset = PatientDataset(dataset=val_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels)
+    val_dataset = PatientDataset(dataset=val_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels, embedding_path=args.embedding_path)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate, num_workers=args.num_workers, sampler=sampler_val, drop_last=True)
 
     test_dataset = Subset(dataset, test_indices)
-    test_dataset = PatientDataset(dataset=test_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels)
+    test_dataset = PatientDataset(dataset=test_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels, embedding_path=args.embedding_path)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, collate_fn=collate, num_workers=args.num_workers, sampler=sampler_test, drop_last=True)
 
 
@@ -220,7 +212,8 @@ def single_run(args, params, logger):
     print("Getting model...")
     
     model = EHRModel(model_name = 'Transformer', input_dim=args.input_dim, num_heads=args.num_heads, num_layers=args.num_layers, dropout_prob=args.dropout, 
-                     hidden_dim=args.hidden_dim, output_dim=args.output_dim, memory_bank_size=args.memory_bank_size, code_size=21000, lr=args.lr, task=args.task, num_class=num_class)
+                     hidden_dim=args.hidden_dim, output_dim=args.output_dim, memory_bank_size=args.memory_bank_size, code_size=21000, lr=args.lr, task=args.task, num_class=num_class,
+                     pre_trained_embedding=args.embedding_path)
     
     total_params = sum(param.numel() for param in model.parameters())
     print(total_params)
@@ -230,39 +223,22 @@ def single_run(args, params, logger):
     # Define callbacks
     early_stop_callback = EarlyStopping(monitor="val/aupr", mode="max", patience=5, verbose=True)
     checkpoint_callback = ModelCheckpoint(monitor="val/aupr", mode="max", dirpath=dirpath, filename="best-checkpoint-all-attributes", save_top_k=1, verbose=True)
-    # 根据参数决定是否使用单GPU模式
-    # debug模式只影响数据集大小，不影响分布式训练
-    if args.single_gpu:
-        # 强制单GPU模式
-        trainer = Trainer(max_epochs=epochs,
-                          logger = logger, 
-                          accelerator='gpu', 
-                          devices=1,
-                          log_every_n_steps=1,
-                          enable_progress_bar=True,
-                          enable_model_summary=True,
-                          callbacks=[checkpoint_callback, early_stop_callback],)
-    else:
-        # 多GPU模式（debug模式也可以使用多GPU）
-        trainer = Trainer(max_epochs=epochs,
-                          logger = logger, 
-                          accelerator='gpu', 
-                          log_every_n_steps=1,
-                          devices=torch.cuda.device_count(), 
-                          strategy='ddp_find_unused_parameters_true', 
-                          enable_progress_bar=True,
-                          enable_model_summary=True,
-                          callbacks=[checkpoint_callback, early_stop_callback],)
+    trainer = Trainer(max_epochs=epochs,
+                      logger = logger, 
+                      accelerator='gpu', 
+                      log_every_n_steps=1,
+                      devices=torch.cuda.device_count(), 
+                      strategy='ddp_find_unused_parameters_true', 
+                      enable_progress_bar=True,
+                      enable_model_summary=True,
+                      callbacks=[checkpoint_callback, early_stop_callback],)
     
     trainer.fit(model, train_dataloader, val_dataloader)
     torch.save(model.state_dict(), f"{dirpath}/model.pth")
 
     trainer.test(model, test_dataloader)
 
-    # 清理数据缓存
-    cleanup_dataset_cache(params['dataset'], params['task'], args.debug_patients if args.debug else None)
-    
-    print("Training finished.")
+    logger.info("Training finished.")
     
     
     #run.stop()

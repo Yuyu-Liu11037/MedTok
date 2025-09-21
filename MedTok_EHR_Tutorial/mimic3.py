@@ -17,15 +17,15 @@ class MIMIC3Dataset(BaseEHRDataset):
     patients. The dataset is available at https://mimic.physionet.org/.
 
     The basic information is stored in the following tables:
-        - PATIENTS: defines a patient in the database, subject_id.
-        - ADMISSIONS: defines a patient's hospital admission, hadm_id.
+        - PATIENTS: defines a patient in the database, SUBJECT_ID.
+        - ADMISSIONS: defines a patient's hospital admission, HADM_ID.
 
     We further support the following tables:
         - DIAGNOSES_ICD: contains ICD-9 diagnoses (ICD9CM code) for patients.
         - PROCEDURES_ICD: contains ICD-9 procedures (ICD9PROC code) for patients.
-        - PRESCRIPTIONS: contains medication related order entries (ndc code)
+        - PRESCRIPTIONS: contains medication related order entries (NDC code)
             for patients.
-        - LABEVENTS: contains laboratory measurements (MIMIC3_itemid code)
+        - LABEVENTS: contains laboratory measurements (MIMIC3_ITEMID code)
             for patients
 
     Args:
@@ -62,7 +62,7 @@ class MIMIC3Dataset(BaseEHRDataset):
         >>> dataset = MIMIC3Dataset(
         ...         root="/srv/local/data/physionet.org/files/mimiciii/1.4",
         ...         tables=["DIAGNOSES_ICD", "PRESCRIPTIONS"],
-        ...         code_mapping={"ndc": ("ATC", {"target_kwargs": {"level": 3}})},
+        ...         code_mapping={"NDC": ("ATC", {"target_kwargs": {"level": 3}})},
         ...     )
         >>> dataset.stat()
         >>> dataset.info()
@@ -289,7 +289,7 @@ class MIMIC3Dataset(BaseEHRDataset):
             The updated patients dict.
         """
         table = "PRESCRIPTIONS"
-        self.code_vocs["drugs"] = "ndc"
+        self.code_vocs["drugs"] = "NDC"
         # read table
         df = pd.read_csv(
             os.path.join(self.root, f"{table}.csv"),
@@ -315,7 +315,7 @@ class MIMIC3Dataset(BaseEHRDataset):
                     event = Event(
                         code=code,
                         table=table,
-                        vocabulary="ndc",
+                        vocabulary="NDC",
                         visit_id=v_id,
                         patient_id=p_id,
                         timestamp=strptime(timestamp),
@@ -347,7 +347,7 @@ class MIMIC3Dataset(BaseEHRDataset):
             The updated patients dict.
         """
         table = "LABEVENTS"
-        self.code_vocs["labs"] = "MIMIC3_itemid"
+        self.code_vocs["labs"] = "MIMIC3_ITEMID"
         # read table
         df = pd.read_csv(
             os.path.join(self.root, f"{table}.csv"),
@@ -370,7 +370,7 @@ class MIMIC3Dataset(BaseEHRDataset):
                     event = Event(
                         code=code,
                         table=table,
-                        vocabulary="MIMIC3_itemid",
+                        vocabulary="MIMIC3_ITEMID",
                         visit_id=v_id,
                         patient_id=p_id,
                         timestamp=strptime(timestamp),
@@ -457,7 +457,7 @@ if __name__ == "__main__":
             "PRESCRIPTIONS",
             "LABEVENTS",
         ],
-        code_mapping={"ndc": "ATC"},
+        code_mapping={"NDC": "ATC"},
         dev=True,
         refresh_cache=True,
     )
@@ -468,7 +468,7 @@ if __name__ == "__main__":
     #     root="/srv/local/data/physionet.org/files/mimiciii/1.4",
     #     tables=["DIAGNOSES_ICD", "PRESCRIPTIONS"],
     #     dev=True,
-    #     code_mapping={"ndc": ("ATC", {"target_kwargs": {"level": 3}})},
+    #     code_mapping={"NDC": ("ATC", {"target_kwargs": {"level": 3}})},
     #     refresh_cache=False,
     # )
     # print(dataset.stat())

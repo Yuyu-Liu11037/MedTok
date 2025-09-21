@@ -1,5 +1,4 @@
 import pickle
-import sys
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -48,7 +47,7 @@ med_codes_pkg_map_path = '../Dataset/medicalCode/all_codes_mappings.parquet'
 
 ##read patient EHR data for MIMIC III or MIMIC IV and then obtain the corresponding format for each of tasks, and then generate patient-specific graph for each patient for each visit
 class PatientEHR(object):
-    def __init__(self, dataset, split, visit_num_th, max_visit_th, task='mortality', remove_outliers=True, debug_limit=None):
+    def __init__(self, dataset, split, visit_num_th, max_visit_th, task='mortality', remove_outliers=True):
         super(PatientEHR, self).__init__()
 
         self.dataset = dataset
@@ -57,7 +56,6 @@ class PatientEHR(object):
         self.max_visit_th = max_visit_th
         self.task = task
         self.is_remove = remove_outliers
-        self.debug_limit = debug_limit  # 用于debug时限制处理的患者数量
 
         self.medical_code = pd.read_parquet(med_codes_pkg_map_path)
         self.medical_code['med_code'] = self.medical_code['med_code'].apply(lambda x: x.replace('.', ''))
@@ -79,18 +77,6 @@ class PatientEHR(object):
                 self.patient_ehr_data = pickle.load(f)
         else:
             self.database = self.load_database()
-            # print("=== 数据集信息 ===")
-            # print(dir(self.database))
-            # print(f"root: {self.database.root}")
-            # print(f"tables: {self.database.tables}")
-            # print(f"dev: {self.database.dev}")
-            # print("=== 数据集统计信息 ===")
-            # self.database.stat()
-            # print("\n=== 数据集详细信息 ===")
-            # self.database.info()
-            # print("=== 患者数量 ===")
-            # print(len(self.database.patients))
-            # sys.exit()
             self.patient_ehr_data = self.process_structure_EHR_for_patient()
     
     def load_database(self):
@@ -104,7 +90,7 @@ class PatientEHR(object):
                 code_mapping={
                     "NDC": ("ATC", {"target_kwargs": {"level": 5}})
                     },   
-                refresh_cache=True     
+                #refresh_cache=True     
             )
         elif self.dataset == 'MIMIC_IV':
             database = MIMIC4Dataset(
@@ -148,14 +134,8 @@ class PatientEHR(object):
                         continue
                     
 
-        # print("processing EHR data")
-        # 如果设置了debug_limit，只处理前N个患者
-        patients_to_process = self.database.patients.items()
-        if self.debug_limit is not None:
-            patients_to_process = list(patients_to_process)[:self.debug_limit]
-            print(f"Debug模式：只处理前 {self.debug_limit} 个患者")
-        
-        for _, patient in tqdm(patients_to_process, desc = "Processing EHR data"):
+        print("processing EHR data")
+        for _, patient in tqdm(self.database.patients.items(), desc = "Processing EHR data"):
             if self.task == 'mortality':
                 sample = self.mortality_dataset(patient)
                 if sample is not None:
