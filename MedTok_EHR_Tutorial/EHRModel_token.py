@@ -30,7 +30,7 @@ import sys
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 from torch_geometric.nn import global_mean_pool
 
-import wandb
+# import wandb  # Removed wandb logging
 
 
 class PositionalEncoding(nn.Module):
@@ -85,10 +85,11 @@ class EHRModel(pl.LightningModule):
                  lr=0.0001, wd=0.0, lr_factor=0.01, num_class=2, task='readmission', lr_patience=100, lr_threshold=1e-4,
                  lr_threshold_mode='rel', lr_cooldown=0, min_lr=1e-8, eps=1e-8, lr_total_iters=10, memory_bank_size = 512, 
                  pre_trained_embedding = '../MedTok/embeddings_all.npy',
-                 hparams = None):
+                 hparams = None, rank=0):
 
         super().__init__()
 
+        self.rank = rank
         self.model_name = model_name
         if self.model_name == 'Transformer':
             self.model = nn.ModuleList([
@@ -131,14 +132,16 @@ class EHRModel(pl.LightningModule):
         for code, embedding in embedding_dict.items():
             embeddings_list.append(embedding)
         self.emb = torch.from_numpy(np.array(embeddings_list)).cuda()
-        print("self.emb")
-        print(self.emb.shape)
-        print(self.emb.device)
+        if self.rank == 0:
+            print("self.emb")
+            print(self.emb.shape)
+            print(self.emb.device)
         #self.emb = nn.Embedding(self.code_size + 1, input_dim) # output_dim = 128 , +1 means CLS token
         self.num_layers = num_layers
 
         self.cls_emb = torch.nn.Parameter(torch.randn(1, output_dim)).cuda()
-        print(self.cls_emb.device)
+        if self.rank == 0:
+            print(self.cls_emb.device)
         self.miss_emb = torch.nn.Parameter(torch.randn(1, 256)).cuda()
         self.gender_emb = nn.Embedding(5, input_dim)
         self.ethnicity_emb = nn.Embedding(100, input_dim)
@@ -406,20 +409,25 @@ class EHRModel(pl.LightningModule):
         auc, aupr, f1 = self.compute_metrics(sample.label, prob_logits)
 
         #self.update_memory_bank(patient_embedding.detach())
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size = sample.size(0))
-        self.log("train/auc", auc, on_step=True, on_epoch=True, prog_bar=True, batch_size = sample.size(0))
-        self.log("train/aupr", aupr, on_step=True, on_epoch=True, prog_bar=True, batch_size = sample.size(0))
-        self.log("train/f1", f1, on_step=True, on_epoch=True, prog_bar=True, batch_size = sample.size(0))
+        # 记录到PyTorch Lightning，包括步骤和epoch级别的日志
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=sample.size(0))
+        self.log("train/auc", auc, on_step=True, on_epoch=True, prog_bar=True, batch_size=sample.size(0))
+        self.log("train/aupr", aupr, on_step=True, on_epoch=True, prog_bar=True, batch_size=sample.size(0))
+        self.log("train/f1", f1, on_step=True, on_epoch=True, prog_bar=True, batch_size=sample.size(0))
+        
+        # 在终端显示训练进度（只有rank 0）
+        if self.rank == 0 and self.global_step % 10 == 0:  # 每10步显示一次
+            print(f"Epoch {self.current_epoch}, Step {self.global_step}, Loss: {loss:.4f}, AUC: {auc:.4f}, AUPR: {aupr:.4f}, F1: {f1:.4f}")
 
-
-        #return entropy_loss, auc, aupr
+        return loss
     
     def compute_metrics(self, label, logits):
         '''Computes the AUROC and AUPR for the given logits and labels.'''
         if self.task == 'lenofstay' or self.task == 'phenotype' or self.task == 'drugrec':
             label_numpy = label.detach().cpu().numpy()
             import numpy as np
-            print("label_numpy", label_numpy.size)
+            if self.rank == 0:
+                print("label_numpy", label_numpy.size)
             if label_numpy.shape[-1] == 1 or len(label_numpy.shape) == 1:
                 y_true_one_hot = np.zeros((label_numpy.size, self.num_class))
                 y_true_one_hot[np.arange(label_numpy.size), label_numpy.flatten().astype(int)] = 1
@@ -468,8 +476,9 @@ class EHRModel(pl.LightningModule):
         # Compute loss
         #loss = F.cross_entropy(prob_logits, sample.label)
         import numpy as np
-        print(sample.label.shape)
-        print(sample.label.shape[-1])
+        if self.rank == 0:
+            print(sample.label.shape)
+            print(sample.label.shape[-1])
         if sample.label.shape[-1] == 1 or len(sample.label.shape) == 1:
             y_true_one_hot = torch.zeros((sample.label.size(0), self.num_class)).to(self.device)
             y_true_one_hot[torch.arange(sample.label.size(0)).long(), sample.label.long()] = 1
@@ -496,7 +505,11 @@ class EHRModel(pl.LightningModule):
                   "val/aupr": aupr,
                   "val/f1": f1
                   }
-        self.log_dict(values, batch_size = batch_size)
+        self.log_dict(values, batch_size = batch_size, prog_bar=True)
+        
+        # 在终端显示验证进度（只有rank 0）
+        if self.rank == 0:
+            print(f"Validation - Epoch {self.current_epoch}, Loss: {loss:.4f}, AUC: {auc:.4f}, AUPR: {aupr:.4f}, F1: {f1:.4f}")
 
 
     # TEST STEP
@@ -537,7 +550,11 @@ class EHRModel(pl.LightningModule):
                   "test/aupr": aupr,
                   "test/f1": f1
                   }
-        self.log_dict(values, batch_size = batch_size)
+        self.log_dict(values, batch_size = batch_size, prog_bar=True)
+        
+        # 在终端显示测试进度（只有rank 0）
+        if self.rank == 0:
+            print(f"Test - Loss: {loss:.4f}, AUC: {auc:.4f}, AUPR: {aupr:.4f}, F1: {f1:.4f}")
     
     def predict_step(self, batch, batch_idx):
         '''Defines the step that is run on each batch of test data.'''
@@ -584,11 +601,13 @@ class EHRModel(pl.LightningModule):
         self.eval()
         embeddings = []
         for idx, batch in tqdm(dataloader, desc = 'Getting embeddings'):
-            print(batch)
+            if self.rank == 0:
+                print(batch)
             x = batch
             x = x.to(device)
             embedding, _ = self(x)
-            print("get_embeddings", embedding)
+            if self.rank == 0:
+                print("get_embeddings", embedding)
             embeddings.append(embedding)
         return torch.cat(embeddings, dim=0)
 

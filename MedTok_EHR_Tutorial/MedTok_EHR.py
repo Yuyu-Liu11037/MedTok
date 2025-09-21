@@ -21,6 +21,7 @@ from torch.nn.utils.rnn import pad_sequence
 from load_data import PatientEHR
 from dataloader import PatientDataset, collate
 from EHRModel_token import EHRModel
+from simple_distributed_fix import load_dataset_with_distributed_support, cleanup_dataset_cache
 import sys
 import wandb
 from torch.utils.data import Dataset, Subset, DataLoader
@@ -68,6 +69,8 @@ def construct_args():
     parser.add_argument('--ehr_feat_ratio', type=float, default=1.0)
     parser.add_argument('--pos_enc_dim', type=int, default=8)
     parser.add_argument('--debug', action="store_true")
+    parser.add_argument('--debug_patients', type=int, default=500, help="Number of patients to process in debug mode (default: 500)")
+    parser.add_argument('--single_gpu', action="store_true", help="Use single GPU for debug (ignores multi-GPU setup)")
     parser.add_argument('--mimic_dir_path', type=str)
     parser.add_argument('--save_result_path', type=str, default="task_results")
     parser.add_argument('--seed', type=int, default=42)
@@ -112,10 +115,15 @@ def single_run(args, params, logger):
     max_visits = args.max_visits
     max_medical_code = args.max_medical_code
 
-    # load dataset
-    print("**********Start to load patient EHR data**********")
-    patient = PatientEHR(dataset_name, split='random', visit_num_th=2, max_visit_th=max_visits, task=task, remove_outliers=True)
-    dataset = patient.patient_ehr_data
+    # 检查GPU数量并打印信息
+    gpu_count = torch.cuda.device_count()
+    if gpu_count > 1:
+        print("将使用多GPU训练模式")
+    else:
+        print("将使用单GPU训练模式")
+
+    # 使用分布式支持的数据加载，避免重复加载
+    dataset = load_dataset_with_distributed_support(args, params)
     print("Number of samples: {}".format(len(dataset)))
     filter_out_dataset = []
     for d in dataset:
@@ -123,9 +131,9 @@ def single_run(args, params, logger):
             continue
         else:
             filter_out_dataset.append(d)
-    print("Number of samples: {}".format(len(filter_out_dataset)))
+    print("Number of samples in filtered dataset: {}".format(len(filter_out_dataset)))
     dataset = filter_out_dataset
-    print("Number of samples: {}".format(len(dataset)))
+    # print("Number of samples: {}".format(len(dataset)))
     #print(dataset)
     
     if args.task == 'phenotype':
@@ -163,14 +171,14 @@ def single_run(args, params, logger):
     train_indices, val_indices = train_test_split(
         np.arange(len(dataset)),
         test_size=0.2,  # 20% validation
-        stratify=None,  # Disable stratification for small datasets
+        stratify=None if args.task in ['phenotype', 'drugrec'] else labels,  # Maintain label distribution
         random_state=42  # For reproducibility
     )
     
     val_indices, test_indices = train_test_split(
         val_indices,
         test_size=0.5,  # 50% of the validation set
-        stratify=None,  # Disable stratification for small datasets
+        stratify= None if args.task in ['phenotype', 'drugrec'] else labels[val_indices],  # Maintain label distribution
         random_state=42  # For reproducibility
     )
     
@@ -222,22 +230,39 @@ def single_run(args, params, logger):
     # Define callbacks
     early_stop_callback = EarlyStopping(monitor="val/aupr", mode="max", patience=5, verbose=True)
     checkpoint_callback = ModelCheckpoint(monitor="val/aupr", mode="max", dirpath=dirpath, filename="best-checkpoint-all-attributes", save_top_k=1, verbose=True)
-    trainer = Trainer(max_epochs=epochs,
-                      logger = logger, 
-                      accelerator='gpu', 
-                      log_every_n_steps=1,
-                      devices=torch.cuda.device_count(), 
-                      strategy='ddp_find_unused_parameters_true', 
-                      enable_progress_bar=True,
-                      enable_model_summary=True,
-                      callbacks=[checkpoint_callback, early_stop_callback],)
+    # 根据参数决定是否使用单GPU模式
+    # debug模式只影响数据集大小，不影响分布式训练
+    if args.single_gpu:
+        # 强制单GPU模式
+        trainer = Trainer(max_epochs=epochs,
+                          logger = logger, 
+                          accelerator='gpu', 
+                          devices=1,
+                          log_every_n_steps=1,
+                          enable_progress_bar=True,
+                          enable_model_summary=True,
+                          callbacks=[checkpoint_callback, early_stop_callback],)
+    else:
+        # 多GPU模式（debug模式也可以使用多GPU）
+        trainer = Trainer(max_epochs=epochs,
+                          logger = logger, 
+                          accelerator='gpu', 
+                          log_every_n_steps=1,
+                          devices=torch.cuda.device_count(), 
+                          strategy='ddp_find_unused_parameters_true', 
+                          enable_progress_bar=True,
+                          enable_model_summary=True,
+                          callbacks=[checkpoint_callback, early_stop_callback],)
     
     trainer.fit(model, train_dataloader, val_dataloader)
     torch.save(model.state_dict(), f"{dirpath}/model.pth")
 
     trainer.test(model, test_dataloader)
 
-    logger.info("Training finished.")
+    # 清理数据缓存
+    cleanup_dataset_cache(params['dataset'], params['task'], args.debug_patients if args.debug else None)
+    
+    print("Training finished.")
     
     
     #run.stop()
