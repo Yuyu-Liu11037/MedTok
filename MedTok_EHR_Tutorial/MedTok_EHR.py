@@ -79,7 +79,8 @@ def construct_args():
     parser.add_argument('--input_dim', type=int, default=64)
     parser.add_argument('--output_dim', type=int, default=64)
     parser.add_argument('--num_heads', type=int, default=4)
-    parser.add_argument('--embedding_path', type=str, default='../MedTok/MedTok/code2embeddings.json')
+    parser.add_argument('--embedding_path', type=str, default='../MedTok/code2embeddings.json')
+    parser.add_argument('--use_partial_data', type=int, default=None, help='Number of patients to process for debugging (e.g., 1000). If None, process all data.')
 
     args = parser.parse_args()
     return args
@@ -114,7 +115,7 @@ def single_run(args, params, logger):
 
     # load dataset
     print("**********Start to load patient EHR data**********")
-    patient = PatientEHR(dataset_name, split='random', visit_num_th=2, max_visit_th=max_visits, task=task, remove_outliers=True)
+    patient = PatientEHR(dataset_name, split='random', visit_num_th=2, max_visit_th=max_visits, task=task, remove_outliers=True, use_partial_data=args.use_partial_data)
     dataset = patient.patient_ehr_data
     print("Number of samples: {}".format(len(dataset)))
     filter_out_dataset = []
@@ -194,16 +195,12 @@ def single_run(args, params, logger):
 
 
     print("**********Data Loader**********")
-    train_dataset = Subset(dataset, train_indices)
-    print(train_dataset)
     train_dataset = PatientDataset(dataset=train_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels, embedding_path=args.embedding_path)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate, num_workers=args.num_workers, sampler = sampler_train, drop_last=True) 
 
-    val_dataset = Subset(dataset, val_indices)
     val_dataset = PatientDataset(dataset=val_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels, embedding_path=args.embedding_path)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate, num_workers=args.num_workers, sampler=sampler_val, drop_last=True)
 
-    test_dataset = Subset(dataset, test_indices)
     test_dataset = PatientDataset(dataset=test_dataset, max_visits=args.max_visits, max_medical_code=args.max_medical_code, task=args.task, labels=labels, embedding_path=args.embedding_path)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, collate_fn=collate, num_workers=args.num_workers, sampler=sampler_test, drop_last=True)
 
@@ -219,6 +216,9 @@ def single_run(args, params, logger):
     print(total_params)
 
     dirpath = "results_batch_size_{}_Epochs_{}_Layers_{}_LR_{}_MemorySize_{}".format(args.batch_size, args.epochs, args.num_layers, args.lr, args.memory_bank_size)
+    
+    # 确保目录存在
+    os.makedirs(dirpath, exist_ok=True)
     
     # Define callbacks
     early_stop_callback = EarlyStopping(monitor="val/aupr", mode="max", patience=5, verbose=True)
@@ -236,12 +236,9 @@ def single_run(args, params, logger):
     trainer.fit(model, train_dataloader, val_dataloader)
     torch.save(model.state_dict(), f"{dirpath}/model.pth")
 
-    trainer.test(model, test_dataloader)
-
-    logger.info("Training finished.")
-    
-    
-    #run.stop()
+    # trainer.test(model, test_dataloader)
+    trainer.test(ckpt_path=f"{dirpath}/best-checkpoint-all-attributes.ckpt", 
+             dataloaders=test_dataloader)
 
 
 def hyper_search_(args, params):

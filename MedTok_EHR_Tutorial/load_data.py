@@ -47,7 +47,7 @@ med_codes_pkg_map_path = '../Dataset/medicalCode/all_codes_mappings.parquet'
 
 ##read patient EHR data for MIMIC III or MIMIC IV and then obtain the corresponding format for each of tasks, and then generate patient-specific graph for each patient for each visit
 class PatientEHR(object):
-    def __init__(self, dataset, split, visit_num_th, max_visit_th, task='mortality', remove_outliers=True):
+    def __init__(self, dataset, split, visit_num_th, max_visit_th, task='mortality', remove_outliers=True, use_partial_data=None):
         super(PatientEHR, self).__init__()
 
         self.dataset = dataset
@@ -56,6 +56,7 @@ class PatientEHR(object):
         self.max_visit_th = max_visit_th
         self.task = task
         self.is_remove = remove_outliers
+        self.use_partial_data = use_partial_data
 
         self.medical_code = pd.read_parquet(med_codes_pkg_map_path)
         self.medical_code['med_code'] = self.medical_code['med_code'].apply(lambda x: x.replace('.', ''))
@@ -72,10 +73,21 @@ class PatientEHR(object):
         self.procedure_dict = {}
         self.drug_dict = {}
 
-        if os.path.exists(os.path.join(self.root, f"{dataset}",f"{dataset}_patient_{task}.pkl")):
-            with open(os.path.join(self.root, f"{dataset}", f"{dataset}_patient_{task}.pkl"), 'rb') as f:
-                self.patient_ehr_data = pickle.load(f)
+        # 根据是否使用部分数据生成不同的文件名
+        if self.use_partial_data is not None:
+            cache_filename = f"{dataset}_patient_{task}_partial_{self.use_partial_data}.pkl"
         else:
+            cache_filename = f"{dataset}_patient_{task}.pkl"
+        
+        cache_path = os.path.join(self.root, f"{dataset}", cache_filename)
+        
+        if os.path.exists(cache_path):
+            print(f"Loading cached data from {cache_path}")
+            with open(cache_path, 'rb') as f:
+                self.patient_ehr_data = pickle.load(f)
+            print(f"Loaded {len(self.patient_ehr_data)} samples from cache")
+        else:
+            print(f"Cache not found at {cache_path}, processing data...")
             self.database = self.load_database()
             self.patient_ehr_data = self.process_structure_EHR_for_patient()
     
@@ -135,7 +147,13 @@ class PatientEHR(object):
                     
 
         print("processing EHR data")
-        for _, patient in tqdm(self.database.patients.items(), desc = "Processing EHR data"):
+        # 如果指定了部分数据，只处理前N个患者
+        patients_to_process = self.database.patients.items()
+        if self.use_partial_data is not None:
+            patients_to_process = list(patients_to_process)[:self.use_partial_data]
+            print(f"Processing only first {self.use_partial_data} patients for debugging")
+        
+        for _, patient in tqdm(patients_to_process, desc = "Processing EHR data"):
             if self.task == 'mortality':
                 sample = self.mortality_dataset(patient)
                 if sample is not None:
@@ -162,10 +180,21 @@ class PatientEHR(object):
                 if sample is not None:
                     samples.append(sample)
         
-        file_path = os.path.join(self.root, f"{self.dataset}_patient_{self.task}.pkl")
+        # 使用与加载时相同的缓存文件名
+        if self.use_partial_data is not None:
+            cache_filename = f"{self.dataset}_patient_{self.task}_partial_{self.use_partial_data}.pkl"
+        else:
+            cache_filename = f"{self.dataset}_patient_{self.task}.pkl"
+        
+        file_path = os.path.join(self.root, f"{self.dataset}", cache_filename)
+        
+        # 确保目录存在
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
         with open(file_path, 'wb') as f:
             pickle.dump(samples, f)
-
+        
+        print(f"Saved {len(samples)} samples to {file_path}")
         return samples
     
     def readmission_dataset_ehrshot(self, p_info, p_visit): ##30 days readmission
