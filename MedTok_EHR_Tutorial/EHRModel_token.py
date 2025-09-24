@@ -410,13 +410,13 @@ class EHRModel(pl.LightningModule):
         #print("sample.label", sample.label)
         #print("prob_logits", prob_logits)
         
-        # Compute base loss
+        # Compute base loss (original logic)
         if self.task == 'lenofstay':
-            loss_base = F.cross_entropy(prob_logits, y_true_one_hot)
+            loss = F.cross_entropy(prob_logits, y_true_one_hot)
         else:
-            loss_base = F.binary_cross_entropy_with_logits(prob_logits, y_true_one_hot)
+            loss = F.binary_cross_entropy_with_logits(prob_logits, y_true_one_hot)
         
-        # Compute CPCC loss if enabled
+        # Add CPCC loss if enabled
         if self.use_cpcc:
             # Extract labels for CPCC loss (convert one-hot back to indices if needed)
             if len(sample.label.shape) > 1 and sample.label.shape[-1] > 1:
@@ -424,17 +424,21 @@ class EHRModel(pl.LightningModule):
             else:
                 labels_for_cpcc = sample.label.squeeze()
             
-            # Compute combined loss
-            total_loss, cpcc_loss_value = self.cpcc_loss.compute_combined_loss(
-                loss_base, patient_embedding, labels_for_cpcc, self.task
-            )
-            loss = total_loss
+            # Compute CPCC loss
+            cpcc_loss_value = self.cpcc_loss(patient_embedding, labels_for_cpcc, self.task)
+            
+            # Add CPCC loss to base loss
+            loss = loss + self.cpcc_lamb * cpcc_loss_value
+            
+            # Add centering regularization if enabled
+            if self.cpcc_center:
+                center_reg = 0.01 * torch.norm(torch.mean(patient_embedding, dim=0))
+                loss = loss + center_reg
             
             # Log CPCC loss separately
             self.log("train/cpcc_loss", cpcc_loss_value, on_step=True, on_epoch=True, prog_bar=True, batch_size=sample.size(0))
-        else:
-            loss = loss_base
         
+        # Convert logits to probabilities (original logic)
         if self.task == 'lenofstay' or self.task == 'readmission' or self.task == 'mortality':
             prob_logits = F.softmax(prob_logits, dim=-1)
         else:
@@ -515,13 +519,13 @@ class EHRModel(pl.LightningModule):
         #print("sample.label", sample.label)
         #print("prob_logits", prob_logits)
         
-        # Compute base loss
+        # Compute base loss (original logic)
         if self.task == 'lenofstay':
-            loss_base = F.cross_entropy(prob_logits, y_true_one_hot)
+            loss = F.cross_entropy(prob_logits, y_true_one_hot)
         else:
-            loss_base = F.binary_cross_entropy_with_logits(prob_logits, y_true_one_hot)
+            loss = F.binary_cross_entropy_with_logits(prob_logits, y_true_one_hot)
         
-        # Compute CPCC loss if enabled
+        # Add CPCC loss if enabled
         if self.use_cpcc:
             # Extract labels for CPCC loss
             if len(sample.label.shape) > 1 and sample.label.shape[-1] > 1:
@@ -529,16 +533,19 @@ class EHRModel(pl.LightningModule):
             else:
                 labels_for_cpcc = sample.label.squeeze()
             
-            # Compute combined loss
-            total_loss, cpcc_loss_value = self.cpcc_loss.compute_combined_loss(
-                loss_base, patient_embedding, labels_for_cpcc, self.task
-            )
-            loss = total_loss
+            # Compute CPCC loss
+            cpcc_loss_value = self.cpcc_loss(patient_embedding, labels_for_cpcc, self.task)
+            
+            # Add CPCC loss to base loss
+            loss = loss + self.cpcc_lamb * cpcc_loss_value
+            
+            # Add centering regularization if enabled
+            if self.cpcc_center:
+                center_reg = 0.01 * torch.norm(torch.mean(patient_embedding, dim=0))
+                loss = loss + center_reg
             
             # Log CPCC loss separately
             self.log("val/cpcc_loss", cpcc_loss_value, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        else:
-            loss = loss_base
 
         # Compute metrics
         if self.task == 'lenofstay' or self.task == 'readmission' or self.task == 'mortality':
@@ -577,13 +584,13 @@ class EHRModel(pl.LightningModule):
         #print("sample.label", sample.label)
         #print("prob_logits", prob_logits)
         
-        # Compute base loss
+        # Compute base loss (original logic)
         if self.task == 'lenofstay':
-            loss_base = F.cross_entropy(prob_logits, y_true_one_hot)
+            loss = F.cross_entropy(prob_logits, y_true_one_hot)
         else:
-            loss_base = F.binary_cross_entropy_with_logits(prob_logits, y_true_one_hot)
+            loss = F.binary_cross_entropy_with_logits(prob_logits, y_true_one_hot)
         
-        # Compute CPCC loss if enabled
+        # Add CPCC loss if enabled
         if self.use_cpcc:
             # Extract labels for CPCC loss
             if len(sample.label.shape) > 1 and sample.label.shape[-1] > 1:
@@ -591,16 +598,19 @@ class EHRModel(pl.LightningModule):
             else:
                 labels_for_cpcc = sample.label.squeeze()
             
-            # Compute combined loss
-            total_loss, cpcc_loss_value = self.cpcc_loss.compute_combined_loss(
-                loss_base, patient_embedding, labels_for_cpcc, self.task
-            )
-            loss = total_loss
+            # Compute CPCC loss
+            cpcc_loss_value = self.cpcc_loss(patient_embedding, labels_for_cpcc, self.task)
+            
+            # Add CPCC loss to base loss
+            loss = loss + self.cpcc_lamb * cpcc_loss_value
+            
+            # Add centering regularization if enabled
+            if self.cpcc_center:
+                center_reg = 0.01 * torch.norm(torch.mean(patient_embedding, dim=0))
+                loss = loss + center_reg
             
             # Log CPCC loss separately
             self.log("test/cpcc_loss", cpcc_loss_value, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        else:
-            loss = loss_base
 
         # Compute metrics
         if self.task == 'lenofstay' or self.task == 'readmission' or self.task == 'mortality':

@@ -152,7 +152,7 @@ class EHRCPCCLoss(nn.Module):
         batch_size = representations.shape[0]
         
         if batch_size < 2:
-            return torch.tensor(0.0, device=device)
+            return torch.tensor(0.0, device=device, requires_grad=True)
         
         # Compute hierarchical distances between labels
         hierarchical_distances = self._compute_hierarchical_distance(labels, device)
