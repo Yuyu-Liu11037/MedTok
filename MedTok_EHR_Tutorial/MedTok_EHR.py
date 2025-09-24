@@ -37,10 +37,19 @@ def ddp_setup(rank, world_size, backend='nccl'):
     torch.cuda.set_device(rank)
 
 def set_random_seed(seed):
+    """Set random seed for reproducibility"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    
+    # Set deterministic behavior for PyTorch
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+    # Set environment variables for reproducibility
+    import os
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
 def construct_args():
     parser = argparse.ArgumentParser()
@@ -88,6 +97,10 @@ def construct_args():
     parser.add_argument('--cpcc_lamb', type=float, default=1.0, help='Lambda weight for CPCC loss')
     parser.add_argument('--cpcc_distance_type', type=str, default='l2', choices=['l2', 'l1', 'cosine', 'poincare'], help='Distance metric for CPCC loss')
     parser.add_argument('--cpcc_center', type=int, default=0, help='Whether to use centering regularization (0/1)')
+    
+    # Multiple runs parameters
+    parser.add_argument('--num_runs', type=int, default=5, help='Number of runs for averaging results')
+    parser.add_argument('--base_seed', type=int, default=42, help='Base seed for random number generation')
 
     args = parser.parse_args()
     return args
@@ -112,10 +125,15 @@ def get_logger(dataset, task, kg, hidden_dim, epochs, lr, decay_rate, dropout, n
 
     return logger
 
-def single_run(args, params, logger):
+def single_run(args, params, logger, run_id=0):
 
     dataset_name, task, batch_size, hidden_dim, epochs, lr, weight_decay, dropout, num_layers, decay_rate, alpha, beta, freeze, attn_init, in_drop_rate, kg_ratio, train_ratio, feat_ratio, model_name, pos_enc_dim, debug, mimic_dir_path, save_result_path = \
         params['dataset'], params['task'], params['batch_size'], params['hidden_dim'], params['epochs'], params['lr'], params['weight_decay'], params['dropout'], params['num_layers'], params['decay_rate'], params['alpha'], params['beta'], params['freeze'], params['attn_init'], params['in_drop_rate'], params['kg_ratio'], params['train_ratio'], params['feat_ratio'], params['model'], params['pos_enc_dim'], params['debug'], params['mimic_dir_path'], params['save_result_path']
+    
+    # Set random seed for reproducibility
+    current_seed = args.base_seed + run_id
+    set_random_seed(current_seed)
+    print(f"Run {run_id + 1}/{args.num_runs}: Random seed set to {current_seed}")
     
     max_visits = args.max_visits
     max_medical_code = args.max_medical_code
@@ -223,7 +241,9 @@ def single_run(args, params, logger):
     total_params = sum(param.numel() for param in model.parameters())
     print(total_params)
 
-    dirpath = "results_batch_size_{}_Epochs_{}_Layers_{}_LR_{}_MemorySize_{}".format(args.batch_size, args.epochs, args.num_layers, args.lr, args.memory_bank_size)
+    # Create directory for this run
+    base_dirpath = f"results_cpcc{args.use_cpcc}_cpcc_center{args.cpcc_center}"
+    dirpath = f"{base_dirpath}_run_{run_id + 1}"
     
     # 确保目录存在
     if os.path.exists(dirpath):
@@ -246,9 +266,21 @@ def single_run(args, params, logger):
     trainer.fit(model, train_dataloader, val_dataloader)
     torch.save(model.state_dict(), f"{dirpath}/model.pth")
 
-    # trainer.test(model, test_dataloader)
-    trainer.test(ckpt_path=f"{dirpath}/best-checkpoint-all-attributes.ckpt", 
-             dataloaders=test_dataloader)
+    # Test the model and collect results
+    test_results = trainer.test(ckpt_path=f"{dirpath}/best-checkpoint-all-attributes.ckpt", 
+                               dataloaders=test_dataloader)
+    
+    # Extract metrics from test results
+    if test_results and len(test_results) > 0:
+        test_metrics = test_results[0]
+        print(f"Run {run_id + 1} Test Results:")
+        for key, value in test_metrics.items():
+            print(f"  {key}: {value:.4f}")
+        
+        return test_metrics
+    else:
+        print(f"Run {run_id + 1}: No test results available")
+        return {}
 
 
 def hyper_search_(args, params):
@@ -320,23 +352,92 @@ def main():
         hyper_search_(args, parameters)
 
     else:
-        # start a new wandb run to track this script
-        from pytorch_lightning.loggers import WandbLogger
-        wandb_logger = WandbLogger(project="EHR_experiment",
-            name = "Model_Name_{}_Batch_size_{}_Epochs_{}_Layers_{}_LR_{}_MemorySize_{}".format(model_name, batch_size, epochs, num_layers, lr, args.memory_bank_size),
-            config={
-            "dataset": dataset,
-            "task": task,
-            "model": model_name,
-            "epochs": epochs,
-            "lr": lr,
-            "mimic_dir_path": mimic_dir_path,
-            "batch_size": batch_size,
-            "degree": 50,
-            "hidden_dim": hidden_dim,
+        # Multiple runs for averaging results
+        print(f"Starting {args.num_runs} runs for averaging results...")
+        all_results = []
+        
+        for run_id in range(args.num_runs):
+            print(f"\n{'='*60}")
+            print(f"Starting Run {run_id + 1}/{args.num_runs}")
+            print(f"{'='*60}")
+            
+            # Create logger for this run
+            from pytorch_lightning.loggers import WandbLogger
+            wandb_logger = WandbLogger(project="EHR_experiment",
+                name = "Model_Name_{}_Batch_size_{}_Epochs_{}_Layers_{}_LR_{}_MemorySize_{}_Run_{}".format(
+                    model_name, batch_size, epochs, num_layers, lr, args.memory_bank_size, run_id + 1),
+                config={
+                "dataset": dataset,
+                "task": task,
+                "model": model_name,
+                "epochs": epochs,
+                "lr": lr,
+                "mimic_dir_path": mimic_dir_path,
+                "batch_size": batch_size,
+                "degree": 50,
+                "hidden_dim": hidden_dim,
+                "run_id": run_id + 1,
+                "total_runs": args.num_runs,
+                "base_seed": args.base_seed,
+                "use_cpcc": args.use_cpcc,
+                "cpcc_lamb": args.cpcc_lamb,
+                "cpcc_distance_type": args.cpcc_distance_type,
+                }
+            )
+            
+            # Run single experiment
+            run_results = single_run(args, parameters, wandb_logger, run_id)
+            all_results.append(run_results)
+            
+            print(f"Run {run_id + 1} completed!")
+        
+        # Calculate and display average results
+        print(f"\n{'='*60}")
+        print("FINAL AVERAGED RESULTS")
+        print(f"{'='*60}")
+        
+        if all_results:
+            # Calculate averages
+            avg_results = {}
+            std_results = {}
+            
+            # Get all metric keys
+            all_keys = set()
+            for result in all_results:
+                all_keys.update(result.keys())
+            
+            for key in all_keys:
+                values = [result.get(key, 0) for result in all_results if key in result]
+                if values:
+                    avg_results[key] = np.mean(values)
+                    std_results[key] = np.std(values)
+            
+            # Display results
+            print(f"Results averaged over {args.num_runs} runs:")
+            for key in sorted(avg_results.keys()):
+                if key.startswith('test/'):
+                    avg_val = avg_results[key]
+                    std_val = std_results[key]
+                    print(f"  {key}: {avg_val:.4f} ± {std_val:.4f}")
+            
+            # Save results to file
+            results_summary = {
+                'num_runs': args.num_runs,
+                'base_seed': args.base_seed,
+                'parameters': parameters,
+                'individual_results': all_results,
+                'averaged_results': avg_results,
+                'std_results': std_results
             }
-        )
-        single_run(args, parameters, wandb_logger)
+            
+            import json
+            results_file = f"results_summary_{dataset}_{task}_{model_name}_runs_{args.num_runs}.json"
+            with open(results_file, 'w') as f:
+                json.dump(results_summary, f, indent=2)
+            
+            print(f"\nDetailed results saved to: {results_file}")
+        else:
+            print("No results collected!")
 
 
 if __name__ == '__main__':
