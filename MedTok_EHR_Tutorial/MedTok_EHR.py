@@ -1,6 +1,7 @@
 import pickle
 import json
 import random
+import shutil
 import networkx as nx
 from tqdm import tqdm
 import numpy as np
@@ -43,7 +44,7 @@ def set_random_seed(seed):
 
 def construct_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='MIMIC_III', choices=['MIMIC_III', 'MIMIC_IV', 'EHRShot'])
+    parser.add_argument('--dataset', type=str, default='MIMIC_IV', choices=['MIMIC_III', 'MIMIC_IV', 'EHRShot'])
     parser.add_argument('--model', type=str, default='Transformer', choices=['MLP', 'Transformer'])
     parser.add_argument('--task', type=str, default='readmission', choices=['mortality', 'readmission', 'lenofstay', 'drugrec', 'phenotype', 'new_disease'])
     parser.add_argument('--batch_size', type=int, default=256)
@@ -81,6 +82,12 @@ def construct_args():
     parser.add_argument('--num_heads', type=int, default=4)
     parser.add_argument('--embedding_path', type=str, default='../MedTok/code2embeddings.json')
     parser.add_argument('--use_partial_data', type=int, default=None, help='Number of patients to process for debugging (e.g., 1000). If None, process all data.')
+    
+    # CPCC Loss parameters
+    parser.add_argument('--use_cpcc', type=int, default=0, help='Whether to use CPCC loss (0/1)')
+    parser.add_argument('--cpcc_lamb', type=float, default=1.0, help='Lambda weight for CPCC loss')
+    parser.add_argument('--cpcc_distance_type', type=str, default='l2', choices=['l2', 'l1', 'cosine', 'poincare'], help='Distance metric for CPCC loss')
+    parser.add_argument('--cpcc_center', type=int, default=0, help='Whether to use centering regularization (0/1)')
 
     args = parser.parse_args()
     return args
@@ -210,7 +217,8 @@ def single_run(args, params, logger):
     
     model = EHRModel(model_name = 'Transformer', input_dim=args.input_dim, num_heads=args.num_heads, num_layers=args.num_layers, dropout_prob=args.dropout, 
                      hidden_dim=args.hidden_dim, output_dim=args.output_dim, memory_bank_size=args.memory_bank_size, code_size=21000, lr=args.lr, task=args.task, num_class=num_class,
-                     pre_trained_embedding=args.embedding_path)
+                     pre_trained_embedding=args.embedding_path,
+                     use_cpcc=bool(args.use_cpcc), cpcc_lamb=args.cpcc_lamb, cpcc_distance_type=args.cpcc_distance_type, cpcc_center=bool(args.cpcc_center))
     
     total_params = sum(param.numel() for param in model.parameters())
     print(total_params)
@@ -218,6 +226,8 @@ def single_run(args, params, logger):
     dirpath = "results_batch_size_{}_Epochs_{}_Layers_{}_LR_{}_MemorySize_{}".format(args.batch_size, args.epochs, args.num_layers, args.lr, args.memory_bank_size)
     
     # 确保目录存在
+    if os.path.exists(dirpath):
+        shutil.rmtree(dirpath)
     os.makedirs(dirpath, exist_ok=True)
     
     # Define callbacks
