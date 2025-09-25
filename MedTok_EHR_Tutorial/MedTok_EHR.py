@@ -22,7 +22,6 @@ from torch.nn.utils.rnn import pad_sequence
 from load_data import PatientEHR
 from dataloader import PatientDataset, collate
 from EHRModel_token import EHRModel
-from StandardTransformer import StandardTransformer
 import sys
 import wandb
 from torch.utils.data import Dataset, Subset, DataLoader
@@ -56,7 +55,6 @@ def construct_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='MIMIC_IV', choices=['MIMIC_III', 'MIMIC_IV', 'EHRShot'])
     parser.add_argument('--model', type=str, default='Transformer', choices=['MLP', 'Transformer'])
-    parser.add_argument('--use_standard_transformer', type=bool, default=False, help='Whether to use standard Transformer instead of EHR-specific Transformer')
     parser.add_argument('--task', type=str, default='readmission', choices=['mortality', 'readmission', 'lenofstay', 'drugrec', 'phenotype', 'new_disease'])
     parser.add_argument('--batch_size', type=int, default=256)
     parser.add_argument('--hidden_dim', type=int, default=256)
@@ -99,7 +97,6 @@ def construct_args():
     parser.add_argument('--cpcc_lamb', type=float, default=1.0, help='Lambda weight for CPCC loss')
     parser.add_argument('--cpcc_distance_type', type=str, default='l2', choices=['l2', 'l1', 'cosine', 'poincare'], help='Distance metric for CPCC loss')
     parser.add_argument('--cpcc_center', type=int, default=0, help='Whether to use centering regularization (0/1)')
-    parser.add_argument('--cpcc_only', type=int, default=0, help='Whether to use only CPCC loss (no base loss) (0/1)')
     
     # Multiple runs parameters
     parser.add_argument('--num_runs', type=int, default=5, help='Number of runs for averaging results')
@@ -238,18 +235,10 @@ def single_run(args, params, logger, run_id=0):
     # get model
     print("Getting model...")
     
-    if args.use_standard_transformer:
-        print("Using Standard Transformer model...")
-        model = StandardTransformer(model_name='Transformer', input_dim=args.input_dim, num_heads=args.num_heads, num_layers=args.num_layers, dropout_prob=args.dropout, 
-                                   hidden_dim=args.hidden_dim, output_dim=args.output_dim, memory_bank_size=args.memory_bank_size, code_size=21000, lr=args.lr, task=args.task, num_class=num_class,
-                                   pre_trained_embedding=args.embedding_path,
-                                   use_cpcc=bool(args.use_cpcc), cpcc_lamb=args.cpcc_lamb, cpcc_distance_type=args.cpcc_distance_type, cpcc_center=bool(args.cpcc_center), cpcc_only=bool(args.cpcc_only))
-    else:
-        print("Using EHR-specific Transformer model...")
-        model = EHRModel(model_name='Transformer', input_dim=args.input_dim, num_heads=args.num_heads, num_layers=args.num_layers, dropout_prob=args.dropout, 
-                         hidden_dim=args.hidden_dim, output_dim=args.output_dim, memory_bank_size=args.memory_bank_size, code_size=21000, lr=args.lr, task=args.task, num_class=num_class,
-                         pre_trained_embedding=args.embedding_path,
-                         use_cpcc=bool(args.use_cpcc), cpcc_lamb=args.cpcc_lamb, cpcc_distance_type=args.cpcc_distance_type, cpcc_center=bool(args.cpcc_center))
+    model = EHRModel(model_name = 'Transformer', input_dim=args.input_dim, num_heads=args.num_heads, num_layers=args.num_layers, dropout_prob=args.dropout, 
+                     hidden_dim=args.hidden_dim, output_dim=args.output_dim, memory_bank_size=args.memory_bank_size, code_size=21000, lr=args.lr, task=args.task, num_class=num_class,
+                     pre_trained_embedding=args.embedding_path,
+                     use_cpcc=bool(args.use_cpcc), cpcc_lamb=args.cpcc_lamb, cpcc_distance_type=args.cpcc_distance_type, cpcc_center=bool(args.cpcc_center))
     
     total_params = sum(param.numel() for param in model.parameters())
     print(total_params)
