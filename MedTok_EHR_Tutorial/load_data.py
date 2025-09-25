@@ -1,4 +1,5 @@
 import pickle
+import sys
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -154,6 +155,7 @@ class PatientEHR(object):
             print(f"Processing only first {self.use_partial_data} patients for debugging")
         
         for _, patient in tqdm(patients_to_process, desc = "Processing EHR data"):
+            # patient: ['patient_id', 'birth_datetime', 'death_datetime', 'gender', 'ethnicity', 'attr_dict', 'visits', 'index_to_visit_id']
             if self.task == 'mortality':
                 sample = self.mortality_dataset(patient)
                 if sample is not None:

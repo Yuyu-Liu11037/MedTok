@@ -142,6 +142,8 @@ def single_run(args, params, logger, run_id=0):
     print("**********Start to load patient EHR data**********")
     patient = PatientEHR(dataset_name, split='random', visit_num_th=2, max_visit_th=max_visits, task=task, remove_outliers=True, use_partial_data=args.use_partial_data)
     dataset = patient.patient_ehr_data
+    # [{'patient_id': '10001217', 'birthdate': datetime.datetime(2102, 9, 23, 0, 0), 'deathdate': None, 'gender': 'F', 'ethnicity': 'WHITE', 'conditions_map': [([5826, 6889, 16462, 4048, 16477, 4405, 4406, 3804, 765, 4254],)], 'procedures_map': [([688, 340, 5735],)], 'drugs_map': [([4824, 4978, 1179, 4718, 325, 356, 371, 4612, 368, 329, 321, 1093, 3084, 4608, 3234, 271, 846, 4721, -1, 5317, 3053],)], 'label': 0, 'timestamp_encounter': (datetime.datetime(2157, 11, 18, 22, 56),), 'timestamp_discharge': (datetime.datetime(2157, 11, 25, 18, 0),)}] 
+
     print("Number of samples: {}".format(len(dataset)))
     filter_out_dataset = []
     for d in dataset:
